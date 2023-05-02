@@ -1,0 +1,126 @@
+---
+title: "NYPD Data"
+author: "pablo"
+date: "4/29/2023"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Importing the Data
+
+We read the data directly from the below URL, ad display the frist rows to get an idea of the schema. 
+
+```{r }
+library(tidyverse)
+url_i<-"https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+d<-read.csv(url_i)
+head(d)
+length(d$INCIDENT_KEY)
+```
+Next we check the class type of each column, 
+```{r}
+sapply(d,typeof)
+```
+We have to convert the dates from string to a date object
+```{r}
+d['OCCUR_DATE2'] <- as.Date(d$OCCUR_DATE,"%m/%d/%Y")
+head(d$OCCUR_DATE2)
+```
+
+We see that most of our variables are categorical, so it is better to expore by using frequenices. 
+We can ignore the coordinates as we won't conduct a geostatistical analysis.
+
+```{r}
+pct_na<-sapply(d,function(x){sum(is.na(x))/length(x)*100})
+names <-names(d)
+
+df<-data.frame(names,pct_na)
+df
+```
+For the Categorical let's make a few frequencies
+
+```{r,  echo=FALSE}
+names(d[,sapply(d,function(x){typeof(x)=="character"})])
+
+sapply(d[,c("BORO","LOC_OF_OCCUR_DESC","LOC_CLASSFCTN_DESC","LOCATION_DESC","STATISTICAL_MURDER_FLAG", "PERP_AGE_GROUP","PERP_SEX","PERP_RACE","VIC_AGE_GROUP","VIC_SEX","VIC_RACE")],function(x){t<-tibble::as.tibble(table(x)/27312);print(t) })
+
+
+```
+
+1.- We see that LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC have 93% missing so we can't use those columns. 
+2.- Sex of the perpetrator is empty for 36%, but it is safe to impute M
+3.- Sex of the victim has no missing values and 90% is male.
+
+So we see an obvious pattern, that males are way overrepresented as victims ad pepetrators in this type of violent crime. Which matches our intuition
+
+
+
+## Graphical Presentation of frequencies
+
+Lets se the Frequencies Graphically 
+```
+library(ggplot2)
+ggplot(data=data)+geom_bar(aes(x=BORO))+ggtitle("Borough")
+ggplot(data=data)+geom_bar(aes(x=PERP_AGE_GROUP))+ggtitle("Perpetrator Age Group")
+
+ggplot(data=data)+geom_bar(aes(x=PERP_RACE))+ggtitle("Perpetrator Race")+coord_flip()
+
+ggplot(data=data)+geom_bar(aes(x=VIC_RACE))+ggtitle("Victim Race")+coord_flip()
+```
+
+```{r pressure, echo=FALSE}
+d['year']<- sapply(d['OCCUR_DATE2'],year)
+ggplot(data=d)+geom_bar(aes(x=year))+ggtitle("Year")
+```
+
+
+## Seasonality
+
+Lets group the events by month and see if there are any patterns
+```{r, echo=FALSE}
+d['df']<-floor_date(d$OCCUR_DATE2,"month")
+ts2<- d %>% 
+  group_by(df) %>%
+  summarise( n = n())
+head(ts2)
+ggplot(data=ts2,aes(x=df,y=n))+geom_line()
+d['mth']<-month(floor_date(d$OCCUR_DATE2,"month"),label=TRUE)
+ts2<- d %>% 
+  group_by(mth ) %>%
+  summarise( n = n()) 
+
+head(ts2)
+ggplot(data=ts2)+geom_bar(aes(x=mth,y=n),stat="identity")
+
+```
+
+And we see a spike in Summer.
+
+
+
+We see a clear Seasonality Patter. 
+
+## Test Seasonality
+
+We will try to figure out the seasonality
+```{r, echo=FALSE}
+
+ts2<- d %>% 
+  group_by(mth,df ) %>%
+  summarise( n = n()) 
+head(ts2)
+ts2$mth<-as.factor(ts2$mth)
+summary(ts2$mth)
+table(ts2$mth)
+model<- glm(n ~ mth, data=ts2, family=poisson(link="log") )
+summary(model)
+plot(model)
+
+```
