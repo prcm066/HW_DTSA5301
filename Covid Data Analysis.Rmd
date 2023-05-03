@@ -1,0 +1,205 @@
+---
+title: "Covid Data Analysis"
+author: "pablo"
+date: "4/29/2023"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Importing the Data
+
+We read the data directly from the below URL, ad display the frist rows to get an idea of the schema. 
+
+```{r }
+library(tidyverse)
+pth<-"https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+filenames<-c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv")
+
+us_cases<-read_csv(paste(pth,filenames[1],sep=''))
+global_cases<-read_csv(paste(pth,filenames[2],sep=''))
+us_deaths<-read_csv(paste(pth,filenames[3],sep=''))
+global_deaths<-read_csv(paste(pth,filenames[4],sep=''))
+
+
+global_cases <- global_cases %>%
+  pivot_longer(cols=-c('Province/State','Country/Region','Lat','Long'),
+               names_to='date',
+               values_to='cases') %>%
+  select(-c('Lat','Long'))
+
+global_deaths <- global_deaths %>%
+  pivot_longer(cols=-c('Province/State','Country/Region','Lat','Long'),
+               names_to='date',
+               values_to='deaths') %>%
+  select(-c('Lat','Long'))
+
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region=`Country/Region`,
+         Province_State= `Province/State`) %>%
+  mutate(date=mdy(date))
+
+
+
+head(us_cases)
+us_cases <- us_cases %>%
+  pivot_longer(cols=-c(UID:Combined_Key),
+               names_to='date',
+               values_to='cases') %>%
+  select(Admin2:cases) %>% 
+  mutate(date=mdy(date)) %>%
+  select(-c(Lat,Long_))
+head(us_cases)
+
+head(us_deaths)
+us_deaths <- us_deaths %>%
+  pivot_longer(cols=-c(UID:Combined_Key),
+               names_to='date',
+               values_to='deaths') %>%
+  select(Admin2:deaths) %>% 
+  mutate(date=mdy(date)) %>%
+  select(-c(Lat,Long_))
+head(us_deaths)
+
+us<-us_cases %>%
+  full_join(us_deaths)
+
+
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State,Country_Region),
+        sep=",",
+        na.rm=TRUE,
+        remove= FALSE)
+
+uid<read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv")
+```
+Next we check the class type of each column, 
+```{r}
+sapply(d,typeof)
+```
+We have to convert the dates from string to a date object
+```{r}
+d['OCCUR_DATE2'] <- as.Date(d$OCCUR_DATE,"%m/%d/%Y")
+head(d$OCCUR_DATE2)
+```
+
+We see that most of our variables are categorical, so it is better to expore by using frequenices. 
+We can ignore the coordinates as we won't conduct a geostatistical analysis.
+
+```{r}
+pct_na<-sapply(d,function(x){sum(is.na(x))/length(x)*100})
+names <-names(d)
+
+df<-data.frame(names,pct_na)
+df
+```
+For the Categorical let's make a few frequencies
+
+```{r,  echo=FALSE}
+names(d[,sapply(d,function(x){typeof(x)=="character"})])
+
+sapply(d[,c("BORO","LOC_OF_OCCUR_DESC","LOC_CLASSFCTN_DESC","LOCATION_DESC","STATISTICAL_MURDER_FLAG", "PERP_AGE_GROUP","PERP_SEX","PERP_RACE","VIC_AGE_GROUP","VIC_SEX","VIC_RACE")],function(x){t<-tibble::as.tibble(table(x)/27312);print(t) })
+
+
+```
+
+1.- We see that LOC_OF_OCCUR_DESC, LOC_CLASSFCTN_DESC have 93% missing so we can't use those columns. 
+2.- Sex of the perpetrator is empty for 36%, but it is safe to impute M
+3.- Sex of the victim has no missing values and 90% is male.
+
+So we see an obvious pattern, that males are way overrepresented as victims ad pepetrators in this type of violent crime. Which matches our intuition
+
+
+
+## Graphical Presentation of frequencies
+
+Lets se the Frequencies Graphically 
+```
+library(ggplot2)
+ggplot(data=data)+geom_bar(aes(x=BORO))+ggtitle("Borough")
+ggplot(data=data)+geom_bar(aes(x=PERP_AGE_GROUP))+ggtitle("Perpetrator Age Group")
+
+ggplot(data=data)+geom_bar(aes(x=PERP_RACE))+ggtitle("Perpetrator Race")+coord_flip()
+
+ggplot(data=data)+geom_bar(aes(x=VIC_RACE))+ggtitle("Victim Race")+coord_flip()
+```
+
+```{r pressure, echo=FALSE}
+d['year']<- sapply(d['OCCUR_DATE2'],year)
+ggplot(data=d)+geom_bar(aes(x=year))+ggtitle("Year")
+```
+
+
+## Seasonality
+
+Lets group the events by month and see if there are any patterns
+```{r, echo=FALSE}
+d['df']<-floor_date(d$OCCUR_DATE2,"month")
+ts2<- d %>% 
+  group_by(df) %>%
+  summarise( n = n())
+head(ts2)
+ggplot(data=ts2,aes(x=df,y=n))+geom_line()
+d['mth']<-month(floor_date(d$OCCUR_DATE2,"month"),label=TRUE)
+ts2<- d %>% 
+  group_by(mth ) %>%
+  summarise( n = n()) 
+
+head(ts2)
+ggplot(data=ts2)+geom_bar(aes(x=mth,y=n),stat="identity")
+
+```
+
+And we see a spike in Summer.
+
+
+
+We see a clear Seasonality Patter. 
+
+## Test Seasonality
+
+We will try to figure out the seasonality
+```{r, echo=TRUE}
+
+ts2<- d %>% 
+  group_by(df ) %>%
+  summarise( n = n()) 
+head(ts2)
+
+ts3<-ts(ts2$n,frequency = 12,start=c(2006,1))
+plot(ts3)
+
+ts_components <- decompose(ts3)
+plot(ts_components)
+summary(ts_components)
+```
+
+Notice in trend the the downward slope and the structural breakdown due to COVID which caused asharp increase and brought us back to pre 2010 levels. 
+We see a strong seasonality component 
+
+Below, we fit an arima model and we can see that the seasonal component is h
+```{r }
+###
+
+library(forecast)
+tsdisplay(ts3)
+
+plot(acf(ts3))
+plot(pacf(ts3))
+
+model<-auto.arima(ts3,seasonal = TRUE)
+plot(model$fitted)
+lines(ts3, col='red')
+qqnorm(model$residuals)
+summary(model)
+
+```
