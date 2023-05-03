@@ -4,6 +4,7 @@ author: "pablo"
 date: "4/29/2023"
 output:
   pdf_document: default
+  word_document: default
   html_document:
     df_print: paged
 ---
@@ -110,17 +111,38 @@ We see a clear Seasonality Patter.
 ## Test Seasonality
 
 We will try to figure out the seasonality
-```{r, echo=FALSE}
+```{r, echo=TRUE}
 
 ts2<- d %>% 
-  group_by(mth,df ) %>%
+  group_by(df ) %>%
   summarise( n = n()) 
 head(ts2)
-ts2$mth<-as.factor(ts2$mth)
-summary(ts2$mth)
-table(ts2$mth)
-model<- glm(n ~ mth, data=ts2, family=poisson(link="log") )
+
+ts3<-ts(ts2$n,frequency = 12,start=c(2006,1))
+plot(ts3)
+
+ts_components <- decompose(ts3)
+plot(ts_components)
+summary(ts_components)
+```
+
+Notice in trend the the downward slope and the structural breakdown due to COVID which caused asharp increase and brought us back to pre 2010 levels. 
+We see a strong seasonality component 
+
+Below, we fit an arima model and we can see that the seasonal component is h
+```{r }
+###
+
+library(forecast)
+tsdisplay(ts3)
+
+plot(acf(ts3))
+plot(pacf(ts3))
+
+model<-auto.arima(ts3,seasonal = TRUE)
+plot(model$fitted)
+lines(ts3, col='red')
+qqnorm(model$residuals)
 summary(model)
-plot(model)
 
 ```
