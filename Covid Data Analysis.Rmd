@@ -3,10 +3,10 @@ title: "Covid Data Analysis"
 author: "pablo"
 date: "4/29/2023"
 output:
+  pdf_document: default
+  word_document: default
   html_document:
     df_print: paged
-  word_document: default
-  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -162,3 +162,48 @@ US_by_state %>%
 
 
 #Model: 
+
+We are going to see if there is a significant difference of deaths per case across states in the US
+To do so, lets fit an linear model for death as a function of cases with Province/State as a factor. 
+
+``` {r, echo=FALSE}
+
+US_by_state2 <- us %>%
+  group_by(Province_State) %>%
+  summarize(cases =sum(cases), deaths=sum(deaths)) %>%
+  mutate(deaths_per_case = deaths/cases) %>%
+  select(Province_State, deaths_per_case) %>%
+    ungroup() %>%
+  arrange(desc(deaths_per_case), .by_group = TRUE) 
+
+f<-factor(US_by_state2$Province_State,levels=US_by_state2$Province_State)
+US_by_state2$f <- f
+ggplot(data=US_by_state2)+geom_bar(aes(x=f,y=deaths_per_case),stat="identity")+ coord_flip()
+```
+
+From the previous plot we expect Grand Princess and New Jersey to have the stronger effect. So these have the highest death per case. The coefficient in our Province_Region will adjust upward the relation
+
+```{r, echo=FALSE}
+library(mgcv)
+model<- lm( deaths ~ cases + as.factor(Province_State), data=US_by_state)
+summary(model)
+
+coefficients <- model$coefficients
+
+df<-data.frame(nm=names(coefficients), coefs=coefficients )
+threshold<-mean(abs(coefficients))
+ggplot(data=df[abs(coefficients)>threshold,])+geom_bar(aes(x=nm, y=coefs),stat="identity")+coord_flip()
+```
+
+
+After controlling for number of cases, the deadliest ones are NJ, NY and Texas.
+
+# BIAS 
+
+There are three sources of bias that i can identify, all related with the prevalence of testing.
+
+1. The first is fundamental almost tautological, the results depend on the prevalence of testing. If you have low testing rates then you are most likely testing the patients that have worse prognosis, so the deaths per confirmed case will increase. 
+
+2. In the US the testing/vaccines got politicized and response to the pandemic got split across political spectrum like red states vs blue states.
+
+3. Wealthier, mega cities in both coasts have very high density which helps transmission and overwhelmed the medical response.
